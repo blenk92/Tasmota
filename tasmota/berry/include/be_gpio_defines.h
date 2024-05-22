@@ -57,6 +57,8 @@ const be_const_member_t lv_gpio_constants[] = {
     { "CM11_TXD", (int32_t) GPIO_CM11_TXD },
     { "CNTR1", (int32_t) GPIO_CNTR1 },
     { "CNTR1_NP", (int32_t) GPIO_CNTR1_NP },
+    { "CORE200S_RX", (int32_t) GPIO_CORE200S_RX },
+    { "CORE200S_TX", (int32_t) GPIO_CORE200S_TX },
     { "CSE7761_RX", (int32_t) GPIO_CSE7761_RX },
     { "CSE7761_TX", (int32_t) GPIO_CSE7761_TX },
     { "CSE7766_RX", (int32_t) GPIO_CSE7766_RX },

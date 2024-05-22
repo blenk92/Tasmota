@@ -221,6 +221,7 @@ enum UserSelectablePins {
   GPIO_RN2XX3_TX, GPIO_RN2XX3_RX, GPIO_RN2XX3_RST,  // RN2XX3 LoRaWan node Serial interface
   GPIO_TCP_TX_EN,                       // TCP to serial bridge, EN pin
   GPIO_ASR650X_TX, GPIO_ASR650X_RX,     // ASR650X LoRaWan node Serial interface
+  GPIO_CORE200S_TX, GPIO_CORE200S_RX,   // Core200S Serial interface
   GPIO_SENSOR_END };
 
 // Error as warning to rethink GPIO usage with max 2045
@@ -324,6 +325,7 @@ const char kSensorNames[] PROGMEM =
   D_SENSOR_HX711_SCK "|" D_SENSOR_HX711_DAT "|"
   D_SENSOR_TX2X_TX "|"
   D_SENSOR_TUYA_TX "|" D_SENSOR_TUYA_RX "|"
+  D_SENSOR_CORE200S_TX "|" D_SENSOR_CORE200S_RX "|"
   D_SENSOR_MGC3130_XFER "|" D_SENSOR_MGC3130_RESET "|"
   D_SENSOR_RF_SENSOR "|"
   D_SENSOR_AZ_TX "|" D_SENSOR_AZ_RX "|"

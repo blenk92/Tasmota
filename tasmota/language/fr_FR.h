@@ -982,6 +982,8 @@
 #define D_SENSOR_BIOPDU_BIT    "BioPDU Bit"
 #define D_SENSOR_LOX_O2_RX     "LoxO2 RX"
 #define D_GPIO_MAGIC_SWITCH "MagicSwitch"
+#define D_SENSOR_CORE200S_TX   "Core200S Tx"
+#define D_SENSOR_CORE200S_RX   "Core200S Rx"
 
 
 // Units
