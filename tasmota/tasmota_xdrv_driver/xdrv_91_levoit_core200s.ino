@@ -279,12 +279,51 @@ namespace {
         }
 
         bool set_fan_speed(FanSpeedMode mode) {
-            std::vector<uint8_t> msg = {0xa5, 0x22, 0x07, 0x07, 0x00, 0x25, 0x01, 0x60, 0xa2, 0x00, 0x00, 0x01, static_cast<uint8_t>(mode)};
-            return !send(msg).empty();
+            std::vector<uint8_t> res = send({0xa5, 0x22, 0x07, 0x07, 0x00, 0x25, 0x01, 0x60, 0xa2, 0x00, 0x00, 0x01, static_cast<uint8_t>(mode)});
+            return !res.empty();
+        }
+
+        bool set_fan_mode(FanMode mode) {
+            std::vector<uint8_t> res = send({0xa5, 0x22, 0x07, 0x05, 0x00, 0x8a, 0x01, 0x00, 0xa0, 0x00, static_cast<uint8_t>(mode)});
+            return !res.empty();
+        }
+
+        bool set_night_light_mode(NightLightMode mode) {
+            std::vector<uint8_t> res = send({0xa5, 0x22, 0x09, 0x06, 0x00, 0x21, 0x01, 0x03, 0xa0, 0x00, 0x00, static_cast<uint8_t>(mode)});
+            return !res.empty();
+        }
+
+        bool set_child_lock_mode(ChildLockMode mode) {
+            std::vector<uint8_t> res = send({0xa5, 0x22, 0x07, 0x05, 0x00, 0x5a, 0x01, 0x00, 0xd1, 0x00, static_cast<uint8_t>(mode)});
+            return !res.empty();
+        }
+
+        bool set_sleep_mode(SleepModeMode mode) {
+            std::vector<uint8_t> res;
+            switch (mode) {
+                case SleepModeMode::SL_ON:
+                    res = send({0xa5, 0x22, 0x07, 0x05, 0x00, 0xa5, 0x01, 0xe0, 0xa5, 0x00, 0x01});
+                    break;
+                case SleepModeMode::SL_OFF:
+                    return set_fan_speed(fan_speed_mode);
+            }
+            return !res.empty();
+        }
+
+        bool set_display_autooff_mode(DisplayAutoOff mode) {
+            std::vector<uint8_t> res;
+            switch (mode) {
+                case DisplayAutoOff::DISPLAY_AUTOOFF_OFF:
+                    res = send({0xa5, 0x22, 0x07, 0x05, 0x00, 0x21, 0x01, 0x05, 0xa1, 0x00, 0x64});
+                    break;
+                case DisplayAutoOff::DISPLAY_AUTOOFF_ON:
+                    res = send({0xa5, 0x22, 0x07, 0x05, 0x00, 0x85, 0x01, 0x05, 0xa1, 0x00, 0x00});
+                    break;
+            }
+            return !res.empty();
         }
 
     private:
-
         std::vector<uint8_t> send(std::vector<uint8_t> message) {
             // increate and set message counter
             msg_count++;
@@ -398,7 +437,6 @@ namespace {
 
     #define GPIO_CORE200S_RX2 16
     #define GPIO_CORE200S_TX2 17
-
     void Core200SInit() {
         int baudrate = 115200;
         Core200SSerial = new TasmotaSerial(GPIO_CORE200S_RX2, GPIO_CORE200S_TX2, 0);
@@ -408,6 +446,175 @@ namespace {
             }
         }
     }
+
+
+#define D_PRFX_CORE200S "C2S_"
+#define D_CMND_CORE200S_FAN_SPEED "fan_speed"
+#define D_CMND_CORE200S_FAN_MODE "fan_mode"
+#define D_CMND_CORE200S_NIGHT_LIGHT "night_light"
+#define D_CMND_CORE200S_CHILD_LOCK "child_lock"
+#define D_CMND_CORE200S_SLEEP_MODE "sleep_mode"
+#define D_CMND_CORE200S_DISPLAY_AUTOOFF "display_autooff"
+
+const char kTasmotaCore200SCommands[] PROGMEM = D_PRFX_CORE200S "|"
+    D_CMND_CORE200S_FAN_SPEED "|" D_CMND_CORE200S_FAN_MODE "|" D_CMND_CORE200S_NIGHT_LIGHT "|" D_CMND_CORE200S_CHILD_LOCK "|" D_CMND_CORE200S_SLEEP_MODE "|" D_CMND_CORE200S_DISPLAY_AUTOOFF;
+
+enum class C2SCmdArgument : uint_fast8_t {
+    ARG_FULL,
+    ARG_MED,
+    ARG_LOW,
+    ARG_OFF,
+    ARG_ON,
+    PARSE_ERROR
+};
+
+auto parse_argument() {
+    switch (XdrvMailbox.data_len) {
+        case 4:
+            if (strncmp(XdrvMailbox.data, "full", 4) == 0) return C2SCmdArgument::ARG_FULL;
+            break;
+        case 3:
+            if (strncmp(XdrvMailbox.data, "med", 3) == 0) return C2SCmdArgument::ARG_MED;
+            else if (strncmp(XdrvMailbox.data, "low", 3) == 0) return C2SCmdArgument::ARG_LOW;
+            else if (strncmp(XdrvMailbox.data, "off", 3) == 0) return C2SCmdArgument::ARG_OFF;
+            break;
+        case 2:
+            if (strncmp(XdrvMailbox.data, "on", 2) == 0) return C2SCmdArgument::ARG_ON;
+            break;
+    }
+    return C2SCmdArgument::PARSE_ERROR;
+}
+
+void handle_fan_speed_cmd() {
+    if (core200s) {
+        FanSpeedMode mode;
+        switch(parse_argument()) {
+            case C2SCmdArgument::ARG_FULL:
+                mode = FanSpeedMode::FAN_SPEED_FULL;
+                break;
+            case C2SCmdArgument::ARG_MED:
+                mode = FanSpeedMode::FAN_SPEED_MED;
+                break;
+            case C2SCmdArgument::ARG_LOW:
+                mode = FanSpeedMode::FAN_SPEED_LOW;
+                break;
+            default:
+                return;
+        }
+
+        if (core200s->set_fan_speed(mode)) {
+            Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
+        }
+    }
+}
+
+void handle_fan_mode_cmd() {
+    if (core200s) {
+        FanMode mode;
+        switch(parse_argument()) {
+            case C2SCmdArgument::ARG_ON:
+                mode = FanMode::FAN_ON;
+                break;
+            case C2SCmdArgument::ARG_OFF:
+                mode = FanMode::FAN_OFF;
+                break;
+            default:
+                return;
+        }
+
+        if (core200s->set_fan_mode(mode)) {
+            Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
+        }
+    }
+}
+
+void handle_night_light_cmd() {
+    if (core200s) {
+        NightLightMode mode;
+        switch(parse_argument()) {
+            case C2SCmdArgument::ARG_OFF:
+                mode = NightLightMode::NL_OFF;
+                break;
+            case C2SCmdArgument::ARG_LOW:
+                mode = NightLightMode::NL_LOW;
+                break;
+            case C2SCmdArgument::ARG_FULL:
+                mode = NightLightMode::NL_FULL;
+                break;
+            default:
+                return;
+        }
+
+        if (core200s->set_night_light_mode(mode)) {
+            Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
+        }
+    }
+}
+
+void handle_child_lock_cmd() {
+    if (core200s) {
+        ChildLockMode mode;
+        switch(parse_argument()) {
+            case C2SCmdArgument::ARG_ON:
+                mode = ChildLockMode::CL_ON;
+                break;
+            case C2SCmdArgument::ARG_OFF:
+                mode = ChildLockMode::CL_OFF;
+                break;
+            default:
+                return;
+        }
+
+        if (core200s->set_child_lock_mode(mode)) {
+            Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
+        }
+    }
+}
+
+void handle_sleep_mode_cmd() {
+    if (core200s) {
+        SleepModeMode mode;
+        switch(parse_argument()) {
+            case C2SCmdArgument::ARG_ON:
+                mode = SleepModeMode::SL_ON;
+                break;
+            case C2SCmdArgument::ARG_OFF:
+                mode = SleepModeMode::SL_OFF;
+                break;
+            default:
+                return;
+        }
+
+        if (core200s->set_sleep_mode(mode)) {
+            Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
+        }
+    }
+}
+
+void handle_display_autooff_cmd() {
+    if (core200s) {
+        DisplayAutoOff mode;
+        switch(parse_argument()) {
+            case C2SCmdArgument::ARG_ON:
+                mode = DisplayAutoOff::DISPLAY_AUTOOFF_ON;
+                break;
+            case C2SCmdArgument::ARG_OFF:
+                mode = DisplayAutoOff::DISPLAY_AUTOOFF_OFF;
+                break;
+            default:
+                return;
+        }
+
+        if (core200s->set_display_autooff_mode(mode)) {
+            Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
+        }
+    }
+}
+
+
+void (* const TasmotaCore200SCommand[])(void) PROGMEM = {
+    &handle_fan_speed_cmd, &handle_fan_mode_cmd, &handle_night_light_cmd, &handle_child_lock_cmd, &handle_sleep_mode_cmd, &handle_display_autooff_cmd
+};
 
 } // namespace
 
@@ -456,6 +663,9 @@ bool Xdrv91(uint32_t function) {
         if (core200s) {
             core200s->showWeb();
         }
+        break;
+    case FUNC_COMMAND:
+        result = DecodeCommand(kTasmotaCore200SCommands, TasmotaCore200SCommand);
         break;
     }
 
