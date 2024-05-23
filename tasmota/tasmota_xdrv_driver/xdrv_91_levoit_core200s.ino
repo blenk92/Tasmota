@@ -4,7 +4,7 @@
 #define XDRV_91 91
 
 #include <vector>
-#include <list>
+#include <tuple>
 #include <TasmotaSerial.h>
 
 namespace {
@@ -130,6 +130,16 @@ namespace {
         return checksum;
     }
 
+    auto convertSecondsToHHMMSS(uint32_t seconds) {
+        uint32_t hours = seconds / 3600;
+        seconds -= hours*3600;
+
+        uint32_t minutes = seconds / 60;
+        seconds -= minutes*60;
+
+        return std::make_tuple(hours, minutes, seconds);
+    }
+
     class Core200S {
     public:
         void init_mcu() {
@@ -179,6 +189,34 @@ namespace {
             parseStatusUpdate(status);
         }
 
+        void queryTimer() {
+            if (!initialized) {
+                return;
+            }
+            std::vector<uint8_t> state = send({0xa5, 0x22, 0x07, 0x04, 0x00, 0x25, 0x01, 0x65, 0xa2, 0x00});
+            if (!state.empty()) {
+                timer_remaining = state.at(10) | state.at(11) << 8 | state.at(12) << 16;
+                timer_total = state.at(14) | state.at(15) << 8 | state.at(16) << 16;
+            }
+        }
+
+        bool set_timer(uint32_t seconds) {
+            // check it timer if set and don't try to clean timer if not set
+            // (The stock firmware also checks if timer is set before it cleans it)
+            queryTimer();
+            delay(50);
+            if (seconds == 0 && timer_total == 0) {
+                return true;
+            }
+            AddLog(LOG_LEVEL_INFO, PSTR("C2S: Set timer to %ds"), seconds);
+            uint8_t byte3 = seconds & 0xFF;
+            uint8_t byte2 = (seconds >> 8) & 0xFF;
+            uint8_t byte1 = (seconds >> 16) & 0xFF;
+            std::vector<uint8_t> res = send({0xa5, 0x22, 0x08, 0x08, 0x00, 0x21, 0x01, 0x64, 0xa2, 0x00, byte3, byte2, byte1, 0x00});
+
+            return !res.empty();
+        }
+
         void parseStatusUpdate(std::vector<uint8_t> message) {
             const std::vector<uint8_t> filter_reset ({0xa5, 0x22, 0x00, 0x05, 0x00, 0xa8, 0x01, 0xe4, 0xa5, 0x00, 0x01});
 
@@ -191,10 +229,17 @@ namespace {
                 dp_auto_off = static_cast<DisplayAutoOff>(message[17]);
                 cl_mode = static_cast<ChildLockMode>(message[20]);
                 nl_mode = static_cast<NightLightMode>(message[21]);
+
+                // When timer is set it send a status message (but not a message that actually containes the timer)
+                // Thus on each status update we should query if a timer has been set
+                delay(50);
+                queryTimer();
             } else if (message == filter_reset) {
                 // Filter handling not yet implemented since the filter state is maintained on the
                 // esp not the MCU
                 AddLog(LOG_LEVEL_INFO, PSTR("C2S: Detected Filter Reset. Not Implemented..."));
+            } else {
+                printMessage("Couldn't parse meassge ", message);
             }
         }
 
@@ -261,12 +306,19 @@ namespace {
             ResponseAppend_P(to_readable(dp_auto_off));
             ResponseAppend_P(PSTR("\""));
 
+            // Timer
+            ResponseAppend_P(PSTR(",\"Timer\": {"));
+            ResponseAppend_P(PSTR("\"Remaining\":%d"), timer_remaining);
+            ResponseAppend_P(PSTR(",\"Total\":%d"), timer_total);
+            ResponseAppend_P(PSTR("}"));
+
             ResponseAppend_P(PSTR("}"));
         }
 
         void showWeb() {
             #ifdef USE_WEBSERVER
             const char* table_row = PSTR("{s} %s {m} %s {e}");
+            const char* table_row_timer = PSTR("{s} %s {m} %02d:%02d:%02d {e}");
             WSContentSend_P(PSTR("<hr></table>{t}"));
             WSContentSend_P(table_row, "Fan Mode", to_readable(fan_mode));
             WSContentSend_P(table_row, "Fan Speed", to_readable(fan_speed_mode));
@@ -275,6 +327,15 @@ namespace {
             WSContentSend_P(table_row, "Sleep Mode", to_readable(sl_mode));
             WSContentSend_P(table_row, "Display", to_readable(dp_mode));
             WSContentSend_P(table_row, "Display Auto Off", to_readable(dp_auto_off));
+            if (timer_total != 0) {
+                auto total_split = convertSecondsToHHMMSS(timer_total);
+                WSContentSend_P(table_row_timer, "Timer Total", std::get<0>(total_split), std::get<1>(total_split), std::get<2>(total_split));
+
+                auto remaining_split = convertSecondsToHHMMSS(timer_remaining);
+                WSContentSend_P(table_row_timer, "Timer Remaining", std::get<0>(remaining_split), std::get<1>(remaining_split), std::get<2>(remaining_split));
+            } else {
+                WSContentSend_P(table_row, "Timer", "not active");
+            }
             #endif
         }
 
@@ -433,6 +494,10 @@ namespace {
         SleepModeMode sl_mode = SleepModeMode::SL_OFF;
         DisplayMode dp_mode = DisplayMode::DISPLAY_OFF;
         DisplayAutoOff dp_auto_off = DisplayAutoOff::DISPLAY_AUTOOFF_OFF;
+
+    public:
+        uint32_t timer_remaining = 0;
+        uint32_t timer_total = 0;
     };
 
     #define GPIO_CORE200S_RX2 16
@@ -455,9 +520,11 @@ namespace {
 #define D_CMND_CORE200S_CHILD_LOCK "child_lock"
 #define D_CMND_CORE200S_SLEEP_MODE "sleep_mode"
 #define D_CMND_CORE200S_DISPLAY_AUTOOFF "display_autooff"
+#define D_CMND_CORE200S_SET_TIMER "set_timer"
+#define D_CMND_CORE200S_GET_TIMER "get_timer"
 
 const char kTasmotaCore200SCommands[] PROGMEM = D_PRFX_CORE200S "|"
-    D_CMND_CORE200S_FAN_SPEED "|" D_CMND_CORE200S_FAN_MODE "|" D_CMND_CORE200S_NIGHT_LIGHT "|" D_CMND_CORE200S_CHILD_LOCK "|" D_CMND_CORE200S_SLEEP_MODE "|" D_CMND_CORE200S_DISPLAY_AUTOOFF;
+    D_CMND_CORE200S_FAN_SPEED "|" D_CMND_CORE200S_FAN_MODE "|" D_CMND_CORE200S_NIGHT_LIGHT "|" D_CMND_CORE200S_CHILD_LOCK "|" D_CMND_CORE200S_SLEEP_MODE "|" D_CMND_CORE200S_DISPLAY_AUTOOFF "|" D_CMND_CORE200S_SET_TIMER "|" D_CMND_CORE200S_GET_TIMER;
 
 enum class C2SCmdArgument : uint_fast8_t {
     ARG_FULL,
@@ -611,9 +678,27 @@ void handle_display_autooff_cmd() {
     }
 }
 
+void handle_set_timer() {
+    if (core200s) {
+       auto seconds = std::strtoul(XdrvMailbox.data, nullptr, 0);
+       if (seconds >= 24*60*60) {
+            // timer only supports max value of 24h - 1s
+            return;
+       }
+       if (core200s->set_timer(seconds)) {
+            Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
+       }
+    }
+}
+
+void handle_get_timer() {
+    if (core200s) {
+        Response_P(PSTR("{\"%s\": \"success\", \"timer_total\":%d, \"timer_remaining\":%d }"), XdrvMailbox.command, core200s->timer_total, core200s->timer_remaining);
+    }
+}
 
 void (* const TasmotaCore200SCommand[])(void) PROGMEM = {
-    &handle_fan_speed_cmd, &handle_fan_mode_cmd, &handle_night_light_cmd, &handle_child_lock_cmd, &handle_sleep_mode_cmd, &handle_display_autooff_cmd
+    &handle_fan_speed_cmd, &handle_fan_mode_cmd, &handle_night_light_cmd, &handle_child_lock_cmd, &handle_sleep_mode_cmd, &handle_display_autooff_cmd, &handle_set_timer, &handle_get_timer
 };
 
 } // namespace
@@ -644,6 +729,11 @@ bool Xdrv91(uint32_t function) {
         if (core200s) {
             core200s->handleErrors();
             core200s->handleIncomingMessages();
+
+            if (count_update % 5 == 0) {
+                core200s->queryTimer();
+            }
+
             // Once per minute query state manually, just to get in sync again if
             // we for some reason lost a message
             if (count_update == 60) {
