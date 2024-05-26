@@ -1,5 +1,3 @@
-
-
 #ifndef XDRV_91
 #define XDRV_91 91
 
@@ -832,6 +830,8 @@ void (* const TasmotaCore200SCommand[])(void) PROGMEM = {
 
 } // namespace
 
+#define CORE200S_WEB_BUTTON "<td style=\"width:33.34%%\"><button onclick=\"fetch('cm?' + new URLSearchParams({cmnd: 'C2S_%s toggle'}))\">%s</button>"
+
 bool Xdrv91(uint32_t function) {
     static int count_update = 0;
     bool result = false;
@@ -887,8 +887,22 @@ bool Xdrv91(uint32_t function) {
     case FUNC_COMMAND:
         result = DecodeCommand(kTasmotaCore200SCommands, TasmotaCore200SCommand);
         break;
-    }
+    case FUNC_WEB_ADD_MAIN_BUTTON:
+        WSContentSend_P("<table style=\"width:100%%\"><tbody><tr>");
 
+        WSContentSend_P(CORE200S_WEB_BUTTON, "fan_mode", "Mode");
+        WSContentSend_P(CORE200S_WEB_BUTTON, "fan_speed", "Speed");
+        WSContentSend_P(CORE200S_WEB_BUTTON, "sleep_mode", "Sleep");
+
+        WSContentSend_P("</tr><tr>");
+
+        WSContentSend_P(CORE200S_WEB_BUTTON, "night_light", "Light");
+        WSContentSend_P(CORE200S_WEB_BUTTON, "child_lock", "Child Lock");
+        WSContentSend_P(CORE200S_WEB_BUTTON, "display_autooff", "Display");
+
+        WSContentSend_P("</tr></tbody></table>");
+        break;
+    }
     return result;
 }
 
