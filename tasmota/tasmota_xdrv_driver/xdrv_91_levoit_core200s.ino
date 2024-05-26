@@ -344,9 +344,38 @@ namespace {
             return !res.empty();
         }
 
+        bool toggle_fan_speed() {
+            FanSpeedMode mode;
+            switch(fan_speed_mode) {
+                case FanSpeedMode::FAN_SPEED_LOW:
+                    mode = FanSpeedMode::FAN_SPEED_MED;
+                    break;
+                case FanSpeedMode::FAN_SPEED_MED:
+                    mode = FanSpeedMode::FAN_SPEED_FULL;
+                    break;
+                case FanSpeedMode::FAN_SPEED_FULL:
+                    mode = FanSpeedMode::FAN_SPEED_LOW;
+                    break;
+            }
+            return set_fan_speed(mode);
+        }
+
         bool set_fan_mode(FanMode mode) {
             std::vector<uint8_t> res = send({0xa5, 0x22, 0x07, 0x05, 0x00, 0x8a, 0x01, 0x00, 0xa0, 0x00, static_cast<uint8_t>(mode)});
             return !res.empty();
+        }
+
+        bool toggle_fan_mode() {
+            FanMode mode;
+            switch (fan_mode) {
+                case FanMode::FAN_ON:
+                    mode = FanMode::FAN_OFF;
+                    break;
+                case FanMode::FAN_OFF:
+                    mode = FanMode::FAN_ON;
+                    break;
+            }
+            return set_fan_mode(mode);
         }
 
         bool set_night_light_mode(NightLightMode mode) {
@@ -354,9 +383,38 @@ namespace {
             return !res.empty();
         }
 
+        bool toggle_night_light() {
+            NightLightMode mode;
+            switch (nl_mode) {
+                case NightLightMode::NL_OFF:
+                    mode = NightLightMode::NL_FULL;
+                    break;
+                case NightLightMode::NL_LOW:
+                    mode = NightLightMode::NL_OFF;
+                    break;
+                case NightLightMode::NL_FULL:
+                    mode = NightLightMode::NL_LOW;
+                    break;
+            }
+            return set_night_light_mode(mode);
+        }
+
         bool set_child_lock_mode(ChildLockMode mode) {
             std::vector<uint8_t> res = send({0xa5, 0x22, 0x07, 0x05, 0x00, 0x5a, 0x01, 0x00, 0xd1, 0x00, static_cast<uint8_t>(mode)});
             return !res.empty();
+        }
+
+        bool toggle_child_lock_mode() {
+            ChildLockMode mode;
+            switch (cl_mode) {
+                case ChildLockMode::CL_ON:
+                    mode = ChildLockMode::CL_OFF;
+                    break;
+                case ChildLockMode::CL_OFF:
+                    mode = ChildLockMode::CL_ON;
+                    break;
+            }
+            return set_child_lock_mode(mode);
         }
 
         bool set_sleep_mode(SleepModeMode mode) {
@@ -371,6 +429,19 @@ namespace {
             return !res.empty();
         }
 
+        bool toggle_sleep_mode() {
+            SleepModeMode mode;
+            switch(sl_mode) {
+                case SleepModeMode::SL_ON:
+                    mode = SleepModeMode::SL_OFF;
+                    break;
+                case SleepModeMode::SL_OFF:
+                    mode = SleepModeMode::SL_ON;
+                    break;
+            }
+            return set_sleep_mode(mode);
+        }
+
         bool set_display_autooff_mode(DisplayAutoOff mode) {
             std::vector<uint8_t> res;
             switch (mode) {
@@ -382,6 +453,19 @@ namespace {
                     break;
             }
             return !res.empty();
+        }
+
+        bool toggle_display_autooff_mode() {
+            DisplayAutoOff mode;
+            switch (dp_auto_off) {
+                case DisplayAutoOff::DISPLAY_AUTOOFF_OFF:
+                    mode = DisplayAutoOff::DISPLAY_AUTOOFF_ON;
+                    break;
+                case DisplayAutoOff::DISPLAY_AUTOOFF_ON:
+                    mode = DisplayAutoOff::DISPLAY_AUTOOFF_OFF;
+                    break;
+            }
+            return set_display_autooff_mode(mode);
         }
 
     private:
@@ -532,11 +616,14 @@ enum class C2SCmdArgument : uint_fast8_t {
     ARG_LOW,
     ARG_OFF,
     ARG_ON,
+    ARG_TOGGLE,
     PARSE_ERROR
 };
 
 auto parse_argument() {
     switch (XdrvMailbox.data_len) {
+        case 6:
+            if (strncmp(XdrvMailbox.data, "toggle", 6) == 0) return C2SCmdArgument::ARG_TOGGLE;
         case 4:
             if (strncmp(XdrvMailbox.data, "full", 4) == 0) return C2SCmdArgument::ARG_FULL;
             break;
@@ -554,22 +641,25 @@ auto parse_argument() {
 
 void handle_fan_speed_cmd() {
     if (core200s) {
-        FanSpeedMode mode;
+        bool success = false;
         switch(parse_argument()) {
             case C2SCmdArgument::ARG_FULL:
-                mode = FanSpeedMode::FAN_SPEED_FULL;
+                success = core200s->set_fan_speed(FanSpeedMode::FAN_SPEED_FULL);
                 break;
             case C2SCmdArgument::ARG_MED:
-                mode = FanSpeedMode::FAN_SPEED_MED;
+                success = core200s->set_fan_speed(FanSpeedMode::FAN_SPEED_MED);
                 break;
             case C2SCmdArgument::ARG_LOW:
-                mode = FanSpeedMode::FAN_SPEED_LOW;
+                success = core200s->set_fan_speed(FanSpeedMode::FAN_SPEED_LOW);
+                break;
+            case C2SCmdArgument::ARG_TOGGLE:
+                success = core200s->toggle_fan_speed();
                 break;
             default:
                 return;
         }
 
-        if (core200s->set_fan_speed(mode)) {
+        if (success) {
             Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
         }
     }
@@ -577,19 +667,22 @@ void handle_fan_speed_cmd() {
 
 void handle_fan_mode_cmd() {
     if (core200s) {
-        FanMode mode;
+        bool success = false;
         switch(parse_argument()) {
             case C2SCmdArgument::ARG_ON:
-                mode = FanMode::FAN_ON;
+                success = core200s->set_fan_mode(FanMode::FAN_ON);
                 break;
             case C2SCmdArgument::ARG_OFF:
-                mode = FanMode::FAN_OFF;
+                success = core200s->set_fan_mode(FanMode::FAN_OFF);
+                break;
+            case C2SCmdArgument::ARG_TOGGLE:
+                success = core200s->toggle_fan_mode();
                 break;
             default:
                 return;
         }
 
-        if (core200s->set_fan_mode(mode)) {
+        if (success) {
             Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
         }
     }
@@ -597,22 +690,25 @@ void handle_fan_mode_cmd() {
 
 void handle_night_light_cmd() {
     if (core200s) {
-        NightLightMode mode;
+        bool success = false;
         switch(parse_argument()) {
             case C2SCmdArgument::ARG_OFF:
-                mode = NightLightMode::NL_OFF;
+                success = core200s->set_night_light_mode(NightLightMode::NL_OFF);
                 break;
             case C2SCmdArgument::ARG_LOW:
-                mode = NightLightMode::NL_LOW;
+                success = core200s->set_night_light_mode(NightLightMode::NL_LOW);
                 break;
             case C2SCmdArgument::ARG_FULL:
-                mode = NightLightMode::NL_FULL;
+                success = core200s->set_night_light_mode(NightLightMode::NL_FULL);
+                break;
+            case C2SCmdArgument::ARG_TOGGLE:
+                success = core200s->toggle_night_light();
                 break;
             default:
                 return;
         }
 
-        if (core200s->set_night_light_mode(mode)) {
+        if (success) {
             Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
         }
     }
@@ -620,19 +716,22 @@ void handle_night_light_cmd() {
 
 void handle_child_lock_cmd() {
     if (core200s) {
-        ChildLockMode mode;
+        bool success = false;
         switch(parse_argument()) {
             case C2SCmdArgument::ARG_ON:
-                mode = ChildLockMode::CL_ON;
+                success = core200s->set_child_lock_mode(ChildLockMode::CL_ON);
                 break;
             case C2SCmdArgument::ARG_OFF:
-                mode = ChildLockMode::CL_OFF;
+                success = core200s->set_child_lock_mode(ChildLockMode::CL_OFF);
+                break;
+            case C2SCmdArgument::ARG_TOGGLE:
+                success = core200s->toggle_child_lock_mode();
                 break;
             default:
                 return;
         }
 
-        if (core200s->set_child_lock_mode(mode)) {
+        if (success) {
             Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
         }
     }
@@ -640,19 +739,22 @@ void handle_child_lock_cmd() {
 
 void handle_sleep_mode_cmd() {
     if (core200s) {
-        SleepModeMode mode;
+        bool success = false;
         switch(parse_argument()) {
             case C2SCmdArgument::ARG_ON:
-                mode = SleepModeMode::SL_ON;
+                success = core200s->set_sleep_mode(SleepModeMode::SL_ON);
                 break;
             case C2SCmdArgument::ARG_OFF:
-                mode = SleepModeMode::SL_OFF;
+                success = core200s->set_sleep_mode(SleepModeMode::SL_OFF);
+                break;
+            case C2SCmdArgument::ARG_TOGGLE:
+                success = core200s->toggle_sleep_mode();
                 break;
             default:
                 return;
         }
 
-        if (core200s->set_sleep_mode(mode)) {
+        if (success) {
             Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
         }
     }
@@ -660,19 +762,22 @@ void handle_sleep_mode_cmd() {
 
 void handle_display_autooff_cmd() {
     if (core200s) {
-        DisplayAutoOff mode;
+        bool success = false;
         switch(parse_argument()) {
             case C2SCmdArgument::ARG_ON:
-                mode = DisplayAutoOff::DISPLAY_AUTOOFF_ON;
+                success = core200s->set_display_autooff_mode(DisplayAutoOff::DISPLAY_AUTOOFF_ON);
                 break;
             case C2SCmdArgument::ARG_OFF:
-                mode = DisplayAutoOff::DISPLAY_AUTOOFF_OFF;
+                success = core200s->set_display_autooff_mode(DisplayAutoOff::DISPLAY_AUTOOFF_OFF);
+                break;
+            case C2SCmdArgument::ARG_TOGGLE:
+                success = core200s->toggle_display_autooff_mode();
                 break;
             default:
                 return;
         }
 
-        if (core200s->set_display_autooff_mode(mode)) {
+        if (success) {
             Response_P(PSTR("{\"%s\": \"success\"}"), XdrvMailbox.command);
         }
     }
