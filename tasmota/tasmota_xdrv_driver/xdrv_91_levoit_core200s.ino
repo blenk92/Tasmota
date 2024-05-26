@@ -108,7 +108,7 @@ namespace {
         return "";
     }
 
-    void printMessage(const char* prefix, const std::vector<uint8_t>& message) {
+    void printMessage(const char* prefix, uint32_t level, const std::vector<uint8_t>& message) {
         std::vector<char> buffer({0});
         size_t i = 0;
         for (auto& m : message) {
@@ -149,11 +149,12 @@ namespace {
 
             send({0xa5, 0x22, 0x01, 0x05, 0x00, 0xaa, 0x01, 0xe2, 0xa5, 0x00, 0x00});
 
+            // wait for incoming message and reply
             delay(200);
             wait_for_message();
 
             delay(200);
-            send_raw({0xa5, 0x12, 0x00, 0x04, 0x00, 0xa3, 0x01, 0x60, 0x40, 0x00});
+            send_nowait({0xa5, 0x12, 0x00, 0x04, 0x00, 0xa3, 0x01, 0x60, 0x40, 0x00});
 
             delay(200);
             send({0xa5, 0x22, 0x02, 0x04, 0x00, 0x90, 0x01, 0x61, 0x40, 0x00});
@@ -176,7 +177,7 @@ namespace {
                 } else {
                     cmd = {0xa5, 0x22, 0x03, 0x0a, 0x00, 0x76, 0x01, 0x29, 0xa1, 0x00, 0x00, 0xf4, 0x01, 0xf4, 0x01, 0x00};
                 }
-                send(cmd);
+                send_nowait(cmd);
                 wifi_on = on;
             }
         }
@@ -185,19 +186,14 @@ namespace {
             if (!initialized) {
                 return;
             }
-            std::vector<uint8_t> status = send({0xa5, 0x22, 0x06, 0x04, 0x00, 0x8c, 0x01, 0x61, 0x40, 0x00});
-            parseStatusUpdate(status);
+            send_nowait({0xa5, 0x22, 0x06, 0x04, 0x00, 0x8c, 0x01, 0x61, 0x40, 0x00});
         }
 
         void queryTimer() {
             if (!initialized) {
                 return;
             }
-            std::vector<uint8_t> state = send({0xa5, 0x22, 0x07, 0x04, 0x00, 0x25, 0x01, 0x65, 0xa2, 0x00});
-            if (!state.empty()) {
-                timer_remaining = state.at(10) | state.at(11) << 8 | state.at(12) << 16;
-                timer_total = state.at(14) | state.at(15) << 8 | state.at(16) << 16;
-            }
+            send_nowait({0xa5, 0x22, 0x07, 0x04, 0x00, 0x25, 0x01, 0x65, 0xa2, 0x00});
         }
 
         bool set_timer(uint32_t seconds) {
@@ -217,29 +213,42 @@ namespace {
             return !res.empty();
         }
 
-        void parseStatusUpdate(std::vector<uint8_t> message) {
+        void parseStatusUpdates(std::vector<uint8_t> message) {
             const std::vector<uint8_t> filter_reset ({0xa5, 0x22, 0x00, 0x05, 0x00, 0xa8, 0x01, 0xe4, 0xa5, 0x00, 0x01});
 
-            // Status update has length of 22 bytes
-            if (message.size() == 22) {
-                fan_mode = static_cast<FanMode>(message[13]);
-                sl_mode = static_cast<SleepModeMode>(message[14]);
-                fan_speed_mode = static_cast<FanSpeedMode>(message[15]);
-                dp_mode = static_cast<DisplayMode>(message[16]);
-                dp_auto_off = static_cast<DisplayAutoOff>(message[17]);
-                cl_mode = static_cast<ChildLockMode>(message[20]);
-                nl_mode = static_cast<NightLightMode>(message[21]);
+            switch (message.size()) {
+                case 22:
+                    fan_mode = static_cast<FanMode>(message.at(13));
+                    sl_mode = static_cast<SleepModeMode>(message.at(14));
+                    fan_speed_mode = static_cast<FanSpeedMode>(message.at(15));
+                    dp_mode = static_cast<DisplayMode>(message.at(16));
+                    dp_auto_off = static_cast<DisplayAutoOff>(message.at(17));
+                    cl_mode = static_cast<ChildLockMode>(message.at(20));
+                    nl_mode = static_cast<NightLightMode>(message.at(21));
 
-                // When timer is set it send a status message (but not a message that actually containes the timer)
-                // Thus on each status update we should query if a timer has been set
-                delay(50);
-                queryTimer();
-            } else if (message == filter_reset) {
-                // Filter handling not yet implemented since the filter state is maintained on the
-                // esp not the MCU
-                AddLog(LOG_LEVEL_INFO, PSTR("C2S: Detected Filter Reset. Not Implemented..."));
-            } else {
-                printMessage("Couldn't parse meassge ", message);
+                    // When timer is set it send a status message (but not a message that actually containes the timer)
+                    // Thus on each status update we should query if a timer has been set
+                    if (message[1] == '\x22') {
+                       delay(50);
+                       queryTimer();
+                    }
+                    break;
+
+                case 5:
+                    if (message == filter_reset) {
+                        // Filter handling not yet implemented since the filter state is maintained on the
+                        // ESP not the MCU
+                        AddLog(LOG_LEVEL_INFO, PSTR("C2S: Detected Filter Reset. Not Implemented..."));
+                    }
+                    break;
+
+                case 18:
+                    timer_remaining = message.at(10) | message.at(11) << 8 | message.at(12) << 16;
+                    timer_total = message.at(14) | message.at(15) << 8 | message.at(16) << 16;
+                    break;
+
+                default:
+                    printMessage("Unknown status message", LOG_LEVEL_ERROR, message);
             }
         }
 
@@ -249,18 +258,28 @@ namespace {
             }
             std::vector<uint8_t> message = wait_for_message(5, true);
             while(!message.empty()) {
-                if (message[1] == '\x22') {
-                    printMessage("Got incoming message", message);
-                    send_raw({0xa5, 0x12, 0x00, 0x04, 0x00, 0xa3, 0x01, 0x60, 0x40, 0x00});
-                    parseStatusUpdate(message);
+                expected_replies--;
+
+                printMessage("Incoming message", LOG_LEVEL_DEBUG, message);
+                if (message[0] == '\xa5') {
+                    switch (message[1]) {
+                        case '\x22':
+                            send_nowait({0xa5, 0x12, 0x00, 0x04, 0x00, 0xa3, 0x01, 0x60, 0x40, 0x00});
+                        case '\x12':
+                            parseStatusUpdates(message);
+                            break;
+                        default:
+                            printMessage("Unrecognized message type", LOG_LEVEL_ERROR, message);
+                    }
                 }
                 message = wait_for_message(5, true);
             }
         }
 
         void handleErrors() {
-            if (error_count > 10) {
+            if (error_count > 10 || expected_replies > 10) {
                 error_count = 0;
+                expected_replies = 0;
                 init_mcu();
             }
         }
@@ -470,22 +489,26 @@ namespace {
 
     private:
         std::vector<uint8_t> send(std::vector<uint8_t> message) {
-            // increate and set message counter
+            send_nowait(std::move(message));
+            return wait_for_message();
+        }
+
+        void send_nowait(std::vector<uint8_t> message) {
+            if (message.size() >= 2 && message.at(1) == '\x22') {
+                expected_replies++;
+            }
+
+            // increase and set message counter
             msg_count++;
             message[2] = msg_count;
 
             // Insert checksum
             message[5] = calcMessageChecksum(message);
 
-            send_raw(message);
-            return wait_for_message();
-        }
-
-        void send_raw(const std::vector<uint8_t>& message) {
             for (auto b : message) {
                 Core200SSerial->write(b);
             }
-            printMessage("Send", message);
+            printMessage("Send", LOG_LEVEL_DEBUG, message);
         }
 
         std::vector<uint8_t> wait_for_message(size_t remaining_read_attempts = 10, bool expect_no_message = false) {
@@ -534,7 +557,7 @@ namespace {
 
             }
 
-            printMessage("Received Header", message);
+            printMessage("Received Header", LOG_LEVEL_DEBUG, message);
 
             // Inspect payload length field
             message.resize(6 + message.at(3));
@@ -554,7 +577,7 @@ namespace {
                 }
             }
 
-            printMessage("Received Full Message", message);
+            printMessage("Received Full Message", LOG_LEVEL_DEBUG, message);
 
             // Validate checksum
             uint8_t checksum = calcMessageChecksum(message);
@@ -570,6 +593,7 @@ namespace {
         bool initialized = false;
         bool wifi_on = false;
         unsigned error_count = 0;
+        unsigned expected_replies = 0;
 
         FanSpeedMode fan_speed_mode = FanSpeedMode::FAN_SPEED_LOW;
         FanMode fan_mode = FanMode::FAN_OFF;
@@ -588,7 +612,7 @@ namespace {
     #define GPIO_CORE200S_TX2 17
     void Core200SInit() {
         int baudrate = 115200;
-        Core200SSerial = new TasmotaSerial(GPIO_CORE200S_RX2, GPIO_CORE200S_TX2, 0);
+        Core200SSerial = new TasmotaSerial(GPIO_CORE200S_RX2, GPIO_CORE200S_TX2, 0, 0, 128);
         if (Core200SSerial->begin(baudrate)) {
             if (Core200SSerial->hardwareSerial()) {
                 ClaimSerial();
@@ -830,18 +854,19 @@ bool Xdrv91(uint32_t function) {
             core200s->set_wifi_led(function == FUNC_NETWORK_UP);
         }
         break;
-    case FUNC_EVERY_SECOND:
+    case FUNC_EVERY_250_MSECOND:
         if (core200s) {
             core200s->handleErrors();
             core200s->handleIncomingMessages();
-
-            if (count_update % 5 == 0) {
-                core200s->queryTimer();
-            }
-
-            // Once per minute query state manually, just to get in sync again if
+        }
+        break;
+    case FUNC_EVERY_SECOND:
+        if (core200s) {
+            // Roughly once per minute query state manually, just to get in sync again if
             // we for some reason lost a message
             if (count_update == 60) {
+                core200s->queryTimer();
+                delay(100);
                 core200s->queryState();
                 count_update = 0;
             } else {
